@@ -1,11 +1,10 @@
 # Resize-Images.ps1
-#Usage & "path/of/script" -FolderPath "destination/folder/path" -OutputFolder "output/fiolder/path"
+#Usage & "path/of/script" -FolderPath "destination/folder/path"
 # This script resizes all images in a folder to 48x48 pixels using .NET
 
 # Get current folder or ask user for path
 param(
-    [string]$FolderPath = ".",
-    [string]$OutputFolder = ""
+    [string]$FolderPath = "."
 )
 
 # Load .NET assembly for image processing
@@ -17,19 +16,15 @@ if (-not (Test-Path $FolderPath)) {
     exit
 }
 
-# Create output folder if specified
-if ($OutputFolder -ne "") {
-    if (-not (Test-Path $OutputFolder)) {
-        New-Item -ItemType Directory -Path $OutputFolder | Out-Null
-    }
-}
-
 # Get all supported image files
 $images = Get-ChildItem -Path $FolderPath -Include *.png, *.jpg, *.jpeg, *.bmp, *.gif -Recurse
 
 foreach ($img in $images) {
     try {
-        $bitmap = [System.Drawing.Image]::FromFile($img.FullName)
+        # Load image into memory stream to avoid file lock
+        $fileStream = [System.IO.File]::OpenRead($img.FullName)
+        $bitmap = [System.Drawing.Image]::FromStream($fileStream)
+        $imageFormat = $bitmap.RawFormat
         
         # Create a new 48x48 image
         $newBitmap = New-Object System.Drawing.Bitmap 48, 48
@@ -37,20 +32,17 @@ foreach ($img in $images) {
         $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
         $graphics.DrawImage($bitmap, 0, 0, 48, 48)
         
-        # Save output
-        $outputPath = if ($OutputFolder -ne "") {
-            Join-Path $OutputFolder $img.Name
-        } else {
-            $img.FullName
-        }
-        $newBitmap.Save($outputPath, $bitmap.RawFormat)
+        # Cleanup before saving
+        $graphics.Dispose()
+        $bitmap.Dispose()
+        $fileStream.Close()
+        $fileStream.Dispose()
+        
+        # Save directly to destination folder (overwrite original)
+        $newBitmap.Save($img.FullName, $imageFormat)
+        $newBitmap.Dispose()
         
         Write-Host " Resized: $($img.Name)"
-        
-        # Cleanup
-        $graphics.Dispose()
-        $newBitmap.Dispose()
-        $bitmap.Dispose()
     }
     catch {
         Write-Host " Failed to resize $($img.Name): $($_.Exception.Message)"
