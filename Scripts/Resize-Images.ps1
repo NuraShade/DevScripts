@@ -1,52 +1,67 @@
-# Resize-Images.ps1
-#Usage & "path/of/script" -FolderPath "destination/folder/path"
-# This script resizes all images in a folder to 48x48 pixels using .NET
-
-# Get current folder or ask user for path
+# usage .\Resize-Images.ps1 "D:\Images"
 param(
-    [string]$FolderPath = "."
+    [Parameter(Mandatory=$true)]
+    [string]$FolderPath
 )
 
-# Load .NET assembly for image processing
+# Load System.Drawing assembly
 Add-Type -AssemblyName System.Drawing
 
-# Check if folder exists
-if (-not (Test-Path $FolderPath)) {
-    Write-Host " Folder not found: $FolderPath"
-    exit
-}
+# Define resolutions
+$resolutions = @(1024, 512, 256, 128, 64, 48, 32,16)
 
-# Get all supported image files
-$images = Get-ChildItem -Path $FolderPath -Include *.png, *.jpg, *.jpeg, *.bmp, *.gif -Recurse
+# Supported image formats
+$extensions = "*.png","*.jpg","*.jpeg","*.bmp"
 
-foreach ($img in $images) {
-    try {
-        # Load image into memory stream to avoid file lock
-        $fileStream = [System.IO.File]::OpenRead($img.FullName)
-        $bitmap = [System.Drawing.Image]::FromStream($fileStream)
-        $imageFormat = $bitmap.RawFormat
-        
-        # Create a new 48x48 image
-        $newBitmap = New-Object System.Drawing.Bitmap 48, 48
-        $graphics = [System.Drawing.Graphics]::FromImage($newBitmap)
-        $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-        $graphics.DrawImage($bitmap, 0, 0, 48, 48)
-        
-        # Cleanup before saving
-        $graphics.Dispose()
-        $bitmap.Dispose()
+# Process each image
+foreach ($ext in $extensions) {
+    foreach ($file in (Get-ChildItem -Path $FolderPath -Filter $ext)) {
+
+        Write-Host "Processing $($file.Name)..."
+
+        # Load image without locking the file
+        $fileStream = [System.IO.File]::OpenRead($file.FullName)
+        $img = [System.Drawing.Bitmap]::FromStream($fileStream)
         $fileStream.Close()
-        $fileStream.Dispose()
-        
-        # Save directly to destination folder (overwrite original)
-        $newBitmap.Save($img.FullName, $imageFormat)
-        $newBitmap.Dispose()
-        
-        Write-Host " Resized: $($img.Name)"
-    }
-    catch {
-        Write-Host " Failed to resize $($img.Name): $($_.Exception.Message)"
+
+        # Get base name without extension
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+        $extension = $file.Extension
+
+        # Create folder for this image
+        $imageFolder = Join-Path $FolderPath $baseName
+        if (-not (Test-Path $imageFolder)) {
+            New-Item -ItemType Directory -Path $imageFolder | Out-Null
+        }
+
+        # Process each resolution
+        foreach ($size in $resolutions) {
+
+            # Create resized image
+            $resized = New-Object System.Drawing.Bitmap($size, $size)
+            $graphics = [System.Drawing.Graphics]::FromImage($resized)
+            
+            # High quality resize
+            $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+            $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+            
+            $graphics.DrawImage($img, 0, 0, $size, $size)
+            $graphics.Dispose()
+
+            # Save with new name
+            $newFileName = "${baseName}_${size}${extension}"
+            $outputPath = Join-Path $imageFolder $newFileName
+            
+            $resized.Save($outputPath)
+            $resized.Dispose()
+
+            Write-Host "  Created: $baseName\$newFileName"
+        }
+
+        $img.Dispose()
+        Write-Host "Completed $($file.Name)"
     }
 }
 
-Write-Host "Done resizing all images to 48x48."
+Write-Host "Done!"
